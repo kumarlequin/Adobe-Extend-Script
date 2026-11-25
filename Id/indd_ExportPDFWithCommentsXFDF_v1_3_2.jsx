@@ -1,10 +1,10 @@
 #target indesign
-#targetengine "inddExportPdfWithCommentsXfdf_v1_3_1_Engine"
+#targetengine "inddExportPdfWithCommentsXfdf_v1_3_2_Engine"
 
 /*
 SCRIPTMETA-BEGIN
 Script-ID=com.ppm.indd.export-pdf-with-comments-xfdf
-Version=1.3.1
+Version=1.3.2
 Target-App=Adobe InDesign 2024/2025
 Name=コメント付きPDF書き出し(InDesign)
 Release-Date=2026-11-25
@@ -56,8 +56,9 @@ SCRIPTMETA-END
     // ------------------------------------------------------------------
 
     var SCRIPT_NAME = "コメント付きPDF書き出し(InDesign)";
-    var SCRIPT_VERSION = "1.3.1";
+    var SCRIPT_VERSION = "1.3.2";
     var COMMENT_DIALOG_OPACITY = 0.97;
+    var COMMENT_CONFIRM_GUARD_MS = 300; // 同じキー操作の二重通知を読み捨てる時間
     var STORE_KEY = "__inddExportPdfWithCommentsXfdf_v1_0_0__";
     var RUNNING_KEY = STORE_KEY + "running";
     var RUNNING_LOCK_TIMEOUT_MS = 600000;   // これより古い多重起動ロックは無効とみなす
@@ -3680,32 +3681,73 @@ SCRIPTMETA-END
     // コメント編集UI
     // ------------------------------------------------------------------
 
+    function isCommentReturnKey(event) {
+        var keyName = "";
+        var keyIdentifier = "";
+        try { keyName = safeString(event.keyName).toUpperCase(); } catch (eName) { keyName = ""; }
+        try { keyIdentifier = safeString(event.keyIdentifier).toUpperCase(); } catch (eIdentifier) { keyIdentifier = ""; }
+        return keyName === "ENTER" || keyName === "RETURN" || keyName === "NUMPADENTER" ||
+            keyIdentifier === "ENTER" || keyIdentifier === "U+000D" || keyIdentifier === "U+0003";
+    }
+
+    // イベントが修飾キーを false で返す環境があるため、keyboardState と合わせて判定する。
+    function isCommentModifierDown(event, propertyName) {
+        var down = false;
+        var keyState;
+        try { down = event[propertyName] === true; } catch (eEvent) { down = false; }
+        if (down) return true;
+        try {
+            keyState = ScriptUI.environment.keyboardState;
+            down = keyState[propertyName] === true;
+        } catch (eKeyboard) { down = false; }
+        return down;
+    }
+
     // 共通規則: Command+Returnで確定、Shift+Returnで強制改行、Returnで通常改行。
-    function bindCommentInputKeys(memoInput, confirmButton) {
-        memoInput.helpTip = "Command+Returnで確定。Returnで改行。";
-        memoInput.addEventListener("keydown", function (event) {
-            var keyName = safeString(event.keyName).toUpperCase();
-            var hasCommand = event.metaKey === true;
-            var hasShift = event.shiftKey === true;
-            var keyState = null;
-            if (keyName !== "ENTER" && keyName !== "RETURN") return;
-            try { keyState = ScriptUI.environment.keyboardState; } catch (eKeyboard) {}
-            if (keyState) {
-                if (event.metaKey === undefined) hasCommand = keyState.metaKey === true;
-                if (event.shiftKey === undefined) hasShift = keyState.shiftKey === true;
-            }
-            // Return単独はwantReturnによる通常入力に任せ、IMEの確定操作を妨げない。
-            if (!hasCommand && !hasShift) return;
+    // 第3引数 true（キャプチャ）は親でだけ呼ばれ、入力欄自身では呼ばれないため付けない。
+    function bindCommentInputKeys(dialog, memoInput, confirmButton) {
+        var confirming = false;
+        var lastConfirmTime = 0;
+
+        function consumeEvent(event) {
             try { event.preventDefault(); } catch (ePrevent) {}
             try { event.stopPropagation(); } catch (eStop) {}
-            if (hasShift) {
-                // Shiftを優先し、選択中の文字列またはカーソル位置へ改行を挿入する。
-                memoInput.textselection = "\n";
-            } else {
+        }
+
+        function runConfirm() {
+            if (confirming || (new Date()).getTime() - lastConfirmTime < COMMENT_CONFIRM_GUARD_MS) return;
+            confirming = true;
+            try {
                 // 既存ボタンと同じ検証・保存処理を通す。
-                confirmButton.onClick();
+                confirmButton.notify("onClick");
+            } finally {
+                confirming = false;
+                lastConfirmTime = (new Date()).getTime();
             }
-        }, true);
+        }
+
+        function handleConfirmKey(event) {
+            if (!event || !isCommentReturnKey(event)) return;
+            // Shiftを優先し、Command付きでも確定しない。
+            if (isCommentModifierDown(event, "shiftKey") || !isCommentModifierDown(event, "metaKey")) return;
+            consumeEvent(event);
+            runConfirm();
+        }
+
+        memoInput.helpTip = "Command+Returnで確定。Returnで改行。";
+        memoInput.addEventListener("keydown", function (event) {
+            if (!event || !isCommentReturnKey(event)) return;
+            // Return単独はwantReturnによる通常入力に任せ、IMEの確定操作を妨げない。
+            if (isCommentModifierDown(event, "shiftKey")) {
+                consumeEvent(event);
+                // 選択中の文字列またはカーソル位置へ改行を挿入する。
+                memoInput.textselection = "\n";
+                return;
+            }
+            handleConfirmKey(event);
+        });
+        // 入力欄へ届かない場合や、他の項目にフォーカスがある場合の確定を受ける（改行は扱わない）。
+        dialog.addEventListener("keydown", handleConfirmKey);
     }
 
     function makeColorDropdownItems() {
@@ -4083,7 +4125,7 @@ SCRIPTMETA-END
             rebuildRecordList(editingId !== null ? editingId : undefined);
         }
 
-        bindCommentInputKeys(memoInput, closeButton);
+        bindCommentInputKeys(dlg, memoInput, closeButton);
         dlg.show();
         return result;
     }
@@ -4146,7 +4188,11 @@ SCRIPTMETA-END
             };
             dlg.close(1);
         };
-        bindCommentInputKeys(memoInput, okButton);
+        dlg.onShow = function () {
+            // フォーカスが無いとkeydownが届かない。
+            try { memoInput.active = true; } catch (eActive) {}
+        };
+        bindCommentInputKeys(dlg, memoInput, okButton);
         if (dlg.show() !== 1) return null;
         return result;
     }

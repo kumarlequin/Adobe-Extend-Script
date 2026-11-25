@@ -1,5 +1,7 @@
 # InDesignコメント入力 v1.3.1 検証記録
 
+> 実機でCommand+Returnが効かないことが判明し、[v1.3.2](indesign-comment-input-v1.3.2.md) で修正した。下記の模擬検証は入力欄の処理関数を直接呼んでおり、イベントの配信段階を再現していなかった。
+
 確認日: 2026-11-25（日本時間）
 
 ## 対象と比較元
@@ -62,7 +64,7 @@ Return単独でイベントの既定処理を止めないことは確認した�
 GitHub接続ツールで公開状態とmainの内容を確認し、指定プロジェクト配下の専用フォルダ `Adobe-Extend-Script` へ取得した。
 取得時のmainは `6ea5cb5`（Initial commit）で、ルートにはREADME.mdだけが存在した。
 
-ローカルブランチは `codex/indesign-comment-input-1.3.1`、originは `https://github.com/kumarlequin/Adobe-Extend-Script.git`。
+改修時のローカルブランチは `codex/indesign-comment-input-1.3.1`（反映後は `main`）、originは `https://github.com/kumarlequin/Adobe-Extend-Script.git`。
 2026-11-25にユーザーが今回の10ファイルの公開を明示承認した。承認対象はスクリプト全文、Ai / Id / Ps / 共用の構成、README、共通開発ルールとClaude用案内、検証記録、除外設定。GitHubのmainへ反映し、ローカルmainも同じ内容へ同期する。公開用ルールのローカル絶対パスは相対パスへ整理した。Adobeアプリ上での実行テストは行っていない。
 
 Ai / Id / Ps / 共用それぞれにREADMEを配置し、ルートREADMEから案内する。共通ルールはAGENTS.mdに置き、CLAUDE.mdから同じ規則を参照する。
